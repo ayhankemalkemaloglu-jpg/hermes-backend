@@ -22,6 +22,8 @@ const EnvSchema = z.object({
   BRIEFING_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   // How often the cleanup job runs.
   CLEANUP_INTERVAL_MS: z.coerce.number().int().positive().default(3_600_000),
+  // Brave Search API token for the /news endpoint (optional — news disabled if unset).
+  BRAVE_API_KEY: z.string().optional(),
 });
 
 const parsed = EnvSchema.safeParse(process.env);

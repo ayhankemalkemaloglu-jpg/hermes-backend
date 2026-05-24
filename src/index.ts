@@ -13,6 +13,7 @@ import briefingsRouter from './routes/briefings';
 import tradesRouter from './routes/trades';
 import healthRouter from './routes/health';
 import chartsRouter from './routes/charts';
+import newsRouter from './routes/news';
 import { startCleanupJob } from './services/maintenance';
 import { startPricePoller } from './services/livePrices';
 
@@ -41,6 +42,7 @@ app.use('/webhook', webhookRouter);
 app.use('/briefings', briefingsRouter);
 app.use('/trades', tradesRouter);
 app.use('/charts', chartsRouter);
+app.use('/news', newsRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
