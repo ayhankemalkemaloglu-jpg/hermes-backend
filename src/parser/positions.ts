@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { ParsedPosition, Side } from './types';
 
 // e.g. "   dogeusdt LONG @ 0.1032 trend_pullback"
-const POSITION_RE = /(\w+)\s+(LONG|SHORT)\s+@\s+([\d.]+)\s+(\w+)/;
+const POSITION_RE = /(\w+)\s+(LONG|SHORT)\s+@\s+([\d.]+)\s+\[?(\w+)\]?/;
 
 /**
  * Stable identity for an open position. The same symbol+side+entry+strategy
