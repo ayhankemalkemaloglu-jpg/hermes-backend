@@ -16,6 +16,12 @@ const EnvSchema = z.object({
   LOG_PATH: z.string().default('./app.log'),
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
   BINANCE_API_BASE: z.string().url().default('https://api.binance.com'),
+  // Live price/P&L poller cadence for open positions.
+  PRICE_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
+  // Briefings older than this are purged by the cleanup job.
+  BRIEFING_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  // How often the cleanup job runs.
+  CLEANUP_INTERVAL_MS: z.coerce.number().int().positive().default(3_600_000),
 });
 
 const parsed = EnvSchema.safeParse(process.env);

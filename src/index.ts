@@ -12,6 +12,9 @@ import webhookRouter from './routes/webhook';
 import briefingsRouter from './routes/briefings';
 import tradesRouter from './routes/trades';
 import healthRouter from './routes/health';
+import chartsRouter from './routes/charts';
+import { startCleanupJob } from './services/maintenance';
+import { startPricePoller } from './services/livePrices';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -37,6 +40,7 @@ app.use('/health', healthRouter);
 app.use('/webhook', webhookRouter);
 app.use('/briefings', briefingsRouter);
 app.use('/trades', tradesRouter);
+app.use('/charts', chartsRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
@@ -46,6 +50,9 @@ initSocket(server);
 
 server.listen(config.PORT, () => {
   logger.info({ port: config.PORT, env: config.NODE_ENV }, 'Hermes backend listening');
+  // Background jobs: purge stale briefings + push live price/P&L ticks.
+  startCleanupJob();
+  startPricePoller();
 });
 
 function shutdown(signal: string): void {

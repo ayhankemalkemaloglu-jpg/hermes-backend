@@ -58,6 +58,32 @@ const snapshotsByBriefingStmt = db.prepare(
   'SELECT * FROM open_positions_snapshots WHERE briefing_id = ?'
 );
 
+// Duplicate detection: a re-sent briefing has either the same (hour_label, day)
+// or a byte-identical raw_message. We use SQLite's date() so two briefings for
+// the same clock hour on the same UTC day collapse to one.
+const duplicateByHourStmt = db.prepare(
+  `SELECT id FROM briefings WHERE hour_label = ? AND date(timestamp) = date(?) LIMIT 1`
+);
+const duplicateByRawStmt = db.prepare('SELECT id FROM briefings WHERE raw_message = ? LIMIT 1');
+
+/**
+ * Return the id of an already-stored briefing that this one duplicates, or
+ * undefined if it's new. Prevents the same hourly briefing piling up as 3 cards
+ * (and prevents the trade-diff from churning on a re-send).
+ */
+export function findDuplicateBriefing(
+  hourLabel: string | null,
+  timestamp: string,
+  rawMessage: string
+): number | undefined {
+  if (hourLabel) {
+    const byHour = duplicateByHourStmt.get(hourLabel, timestamp) as { id: number } | undefined;
+    if (byHour) return byHour.id;
+  }
+  const byRaw = duplicateByRawStmt.get(rawMessage) as { id: number } | undefined;
+  return byRaw?.id;
+}
+
 export function getLatestBriefing(): BriefingRow | undefined {
   return latestBriefingStmt.get() as BriefingRow | undefined;
 }
