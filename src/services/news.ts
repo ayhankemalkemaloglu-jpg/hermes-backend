@@ -24,7 +24,7 @@ const FEEDS: Record<string, Feed[]> = {
   crypto: [
     {
       name: 'Google News',
-      url: 'https://news.google.com/rss/search?q=cryptocurrency%20OR%20bitcoin%20OR%20ethereum&hl=en-US&gl=US&ceid=US:en',
+      url: 'https://news.google.com/rss/search?q=cryptocurrency%20OR%20bitcoin%20OR%20ethereum%20when:1d&hl=en-US&gl=US&ceid=US:en',
     },
     { name: 'Cointelegraph', url: 'https://cointelegraph.com/rss' },
     { name: 'Decrypt', url: 'https://decrypt.co/feed' },
@@ -37,7 +37,7 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
-const TTL_MS = 5 * 60_000;
+const TTL_MS = 30_000;
 const TIMEOUT_MS = 6_000;
 
 function decode(s: string): string {
