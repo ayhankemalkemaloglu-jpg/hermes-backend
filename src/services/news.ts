@@ -31,6 +31,12 @@ const FEEDS: Record<string, Feed[]> = {
     { name: 'Cointelegraph', url: 'https://cointelegraph.com/rss' },
     { name: 'Decrypt', url: 'https://decrypt.co/feed' },
   ],
+  turkey: [
+    {
+      name: 'Google News',
+      url: 'https://news.google.com/rss/search?q=(borsa%20istanbul%20OR%20d%C3%B6viz%20OR%20ekonomi%20OR%20kripto)%20when:1d&hl=tr&gl=TR&ceid=TR:tr',
+    },
+  ],
 };
 
 interface CacheEntry {
