@@ -15,7 +15,7 @@ import healthRouter from './routes/health';
 import chartsRouter from './routes/charts';
 import newsRouter from './routes/news';
 import { startCleanupJob } from './services/maintenance';
-import { startPricePoller } from './services/livePrices';
+import { startLivePrices } from './services/livePrices';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -52,9 +52,9 @@ initSocket(server);
 
 server.listen(config.PORT, () => {
   logger.info({ port: config.PORT, env: config.NODE_ENV }, 'Hermes backend listening');
-  // Background jobs: purge stale briefings + push live price/P&L ticks.
+  // Background jobs: purge stale briefings + stream live price/P&L ticks.
   startCleanupJob();
-  startPricePoller();
+  startLivePrices();
 });
 
 function shutdown(signal: string): void {
