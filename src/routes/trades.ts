@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
 import { requireAuth } from '../middleware/auth';
-import { getTrades, getStats, StatsWindow } from '../services/trades';
+import { getTrades, getStats, StatsWindow, withPriceDisplay } from '../services/trades';
 
 const router = Router();
 
@@ -15,7 +15,7 @@ const ListQuery = z.object({
 router.get('/', requireAuth(config.AUTH_TOKEN), (req: Request, res: Response) => {
   const q = ListQuery.safeParse(req.query);
   const filters = q.success ? q.data : { limit: 100 };
-  const trades = getTrades(filters);
+  const trades = getTrades(filters).map(withPriceDisplay);
   res.json({ ok: true, count: trades.length, trades });
 });
 

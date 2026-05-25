@@ -1,9 +1,12 @@
 import { db } from '../db/connection';
 import { ParsedPosition } from '../parser/types';
-import { SnapshotRow } from './briefings';
+import { SnapshotRow, recordEvent } from './briefings';
 import { getCurrentPrice } from './binance';
 import { holdMinutes } from '../utils/time';
 import { logger } from '../utils/logger';
+import { fmtPrice } from '../utils/price';
+import { portfolioGuard, dailyRealizedPnl, RISK_ENABLED, RISK_NOTIONAL } from './risk';
+import type { Verdict } from './risk/portfolioGuard';
 
 export interface TradeRow {
   id: number;
@@ -51,9 +54,28 @@ const closeTradeStmt = db.prepare(`
   WHERE id = @id
 `);
 
+/**
+ * A trade enriched for transport: human-formatted prices (significant figures,
+ * so low-priced tokens never render as "0.0000") plus an optional risk flag.
+ */
+export type TradeView = TradeRow & {
+  entry_price_display: string;
+  exit_price_display: string | null;
+  risk_breach?: { reason: string; detail?: unknown };
+};
+
+/** Attach significant-figure price strings to a trade row (FINDING 4). */
+export function withPriceDisplay(t: TradeRow): TradeView {
+  return {
+    ...t,
+    entry_price_display: fmtPrice(t.entry_price),
+    exit_price_display: t.exit_price === null ? null : fmtPrice(t.exit_price),
+  };
+}
+
 export interface DiffResult {
-  opened: TradeRow[];
-  closed: TradeRow[];
+  opened: TradeView[];
+  closed: TradeView[];
 }
 
 /** LONG profits when price rises; SHORT profits when price falls. */
@@ -85,8 +107,21 @@ export async function runTradeDiff(
   const prevByHash = new Map(prevSnapshots.map((s) => [s.position_hash, s]));
   const newByHash = new Map(newPositions.map((p) => [p.position_hash, p]));
 
-  const opened: TradeRow[] = [];
-  const closed: TradeRow[] = [];
+  const opened: TradeView[] = [];
+  const closed: TradeView[] = [];
+
+  // Whole-book view for the portfolio guard: built once from the pre-insert DB
+  // state, then extended as we admit candidates so multiple opens in the same
+  // briefing see one another. Every position counts as one fixed notional unit
+  // (briefings carry no size).
+  const bookForGuard = RISK_ENABLED
+    ? getOpenTrades().map((t) => ({
+        symbol: t.symbol,
+        side: t.side,
+        entry_price: t.entry_price,
+        notional: RISK_NOTIONAL,
+      }))
+    : [];
 
   // --- Newly opened positions -------------------------------------------
   for (const [hash, pos] of newByHash) {
@@ -102,11 +137,54 @@ export async function runTradeDiff(
       price_precision_lost: pos.price_precision_lost ? 1 : 0,
     });
 
-    if (info.changes > 0) {
-      opened.push(tradeByIdStmt.get(Number(info.lastInsertRowid)) as TradeRow);
-    } else {
+    if (info.changes === 0) {
       logger.warn({ hash, symbol: pos.symbol }, 'Trade open skipped (hash already exists)');
+      continue;
     }
+    const row = tradeByIdStmt.get(Number(info.lastInsertRowid)) as TradeRow;
+
+    // FINDING 3: vet the position against the whole book. This backend mirrors
+    // positions the upstream agent already opened, so we can't block them —
+    // record-and-flag: keep the trade, but surface a RED verdict as a
+    // RISK_BREACH event + a flag on the broadcast payload.
+    let breach: { reason: string; detail?: unknown } | undefined;
+    if (RISK_ENABLED) {
+      const candidate = {
+        symbol: pos.symbol,
+        side: pos.side,
+        entry_price: pos.entry_price,
+        notional: RISK_NOTIONAL,
+      };
+      const verdict: Verdict = portfolioGuard.admit(
+        candidate,
+        bookForGuard,
+        dailyRealizedPnl.today(new Date(newTimestamp))
+      );
+      bookForGuard.push(candidate); // recorded -> counts toward later candidates
+      if (!verdict.ok) {
+        breach = { reason: verdict.reason as string, detail: verdict.detail };
+        recordEvent('RISK_BREACH', pos.symbol, {
+          reason: verdict.reason,
+          detail: verdict.detail,
+          position_hash: hash,
+          trade_id: row.id,
+          entry: fmtPrice(pos.entry_price),
+        });
+        logger.warn(
+          {
+            symbol: pos.symbol,
+            side: pos.side,
+            entry: fmtPrice(pos.entry_price),
+            reason: verdict.reason,
+            detail: verdict.detail,
+          },
+          'PortfolioGuard RED — trade recorded + flagged (mirror mode)'
+        );
+      }
+    }
+
+    const view = withPriceDisplay(row);
+    opened.push(breach ? { ...view, risk_breach: breach } : view);
   }
 
   // --- Closed (vanished) positions --------------------------------------
@@ -140,9 +218,14 @@ export async function runTradeDiff(
         pnl_usd: null,
         hold_minutes: hold,
       });
+      // Feed realized P&L (proxy: pct of the fixed notional unit) into the
+      // daily-loss breaker so it can gate same-UTC-day opens.
+      if (RISK_ENABLED) {
+        dailyRealizedPnl.add((pnlPct / 100) * RISK_NOTIONAL, new Date(newTimestamp));
+      }
     }
 
-    closed.push(tradeByIdStmt.get(openTrade.id) as TradeRow);
+    closed.push(withPriceDisplay(tradeByIdStmt.get(openTrade.id) as TradeRow));
   }
 
   return { opened, closed };
