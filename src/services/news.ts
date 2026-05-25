@@ -55,7 +55,7 @@ export async function fetchNews(query: string, count = 15): Promise<NewsItem[] |
   try {
     const url =
       `${BRAVE_WEB_URL}?q=${encodeURIComponent(query)}` +
-      `&count=${safeCount}&freshness=pw&spellcheck=0`;
+      `&count=${safeCount}&spellcheck=0`;
     const res = await fetch(url, {
       headers: {
         Accept: 'application/json',
