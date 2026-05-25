@@ -82,7 +82,19 @@ router.post(
         leader: parsed.leader,
         open_positions_count: parsed.open_positions_count,
       });
-      for (const t of opened) broadcast('trade:open', t);
+      for (const t of opened) {
+        broadcast('trade:open', t);
+        // FINDING 3: surface a portfolio-risk breach to live dashboards. The
+        // trade is still recorded (mirror mode); this just flags it.
+        if (t.risk_breach) {
+          broadcast('risk:breach', {
+            trade_id: t.id,
+            symbol: t.symbol,
+            side: t.side,
+            ...t.risk_breach,
+          });
+        }
+      }
       for (const t of closed) broadcast('trade:close', t);
       if (opened.length || closed.length) broadcast('stats:update', { at: timestamp });
 

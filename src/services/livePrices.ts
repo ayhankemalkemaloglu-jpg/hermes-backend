@@ -3,6 +3,7 @@ import { logger } from '../utils/logger';
 import { broadcast } from '../socket/server';
 import { getCurrentPrice } from './binance';
 import { getOpenTrades, computePnlPct } from './trades';
+import { fmtPrice } from '../utils/price';
 
 function round(n: number, digits = 4): number {
   const f = 10 ** digits;
@@ -14,7 +15,9 @@ export interface LivePosition {
   symbol: string;
   side: string;
   entry_price: number;
+  entry_price_display: string;
   current_price: number;
+  current_price_display: string;
   pnl_pct: number;
   strategy: string | null;
 }
@@ -40,7 +43,7 @@ export async function tickPrices(): Promise<void> {
 
   const at = new Date().toISOString();
   for (const [symbol, price] of prices) {
-    broadcast('price:update', { symbol, price, at });
+    broadcast('price:update', { symbol, price, price_display: fmtPrice(price), at });
   }
 
   const positions: LivePosition[] = open
@@ -52,7 +55,9 @@ export async function tickPrices(): Promise<void> {
         symbol: t.symbol,
         side: t.side,
         entry_price: t.entry_price,
+        entry_price_display: fmtPrice(t.entry_price),
         current_price: current,
+        current_price_display: fmtPrice(current),
         pnl_pct: round(computePnlPct(t.side, t.entry_price, current)),
         strategy: t.strategy,
       };
