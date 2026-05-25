@@ -7,6 +7,7 @@ import {
   insertBriefingWithChildren,
   getLatestBriefing,
   getSnapshotsForBriefing,
+  findDuplicateBriefing,
   recordEvent,
 } from '../services/briefings';
 import { runTradeDiff } from '../services/trades';
@@ -45,6 +46,16 @@ router.post(
       recordEvent('PARSE_ERROR', null, { reason, raw: message.slice(0, 500) });
       logger.error({ reason }, 'Briefing parse failed');
       res.status(200).json({ ok: false, error: 'parse_error', message: reason });
+      return;
+    }
+
+    // 1b. Drop duplicates (same hour re-sent) so the dashboard doesn't pile up
+    //     identical cards and the trade-diff doesn't churn on a re-send.
+    const duplicateOf = findDuplicateBriefing(parsed.hour_label, timestamp, parsed.raw_message);
+    if (duplicateOf !== undefined) {
+      recordEvent('DUPLICATE_BRIEFING', null, { duplicate_of: duplicateOf, hour_label: parsed.hour_label });
+      logger.info({ duplicateOf, hour_label: parsed.hour_label }, 'Duplicate briefing ignored');
+      res.json({ ok: true, duplicate: true, briefing_id: duplicateOf });
       return;
     }
 

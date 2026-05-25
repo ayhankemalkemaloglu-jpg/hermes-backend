@@ -57,9 +57,16 @@ export interface DiffResult {
 }
 
 /** LONG profits when price rises; SHORT profits when price falls. */
-function computePnlPct(side: string, entry: number, exit: number): number {
+export function computePnlPct(side: string, entry: number, exit: number): number {
   if (entry === 0) return 0;
   return side === 'LONG' ? ((exit - entry) / entry) * 100 : ((entry - exit) / entry) * 100;
+}
+
+const openTradesStmt = db.prepare(`SELECT * FROM trades WHERE status = 'OPEN'`);
+
+/** All currently-open trades — used by the live price/P&L poller. */
+export function getOpenTrades(): TradeRow[] {
+  return openTradesStmt.all() as TradeRow[];
 }
 
 /**
