@@ -24,6 +24,11 @@ const EnvSchema = z.object({
   CLEANUP_INTERVAL_MS: z.coerce.number().int().positive().default(3_600_000),
   // Brave Search API token for the /news endpoint (optional — news disabled if unset).
   BRAVE_API_KEY: z.string().optional(),
+  // Voice assistant LLM (OpenAI-compatible: Moonshot/Kimi, Groq, Gemini, …).
+  // /assistant is disabled until ASSISTANT_API_KEY is set.
+  ASSISTANT_API_KEY: z.string().optional(),
+  ASSISTANT_API_BASE: z.string().url().default('https://api.moonshot.ai/v1'),
+  ASSISTANT_MODEL: z.string().default('moonshot-v1-8k'),
 });
 
 const parsed = EnvSchema.safeParse(process.env);

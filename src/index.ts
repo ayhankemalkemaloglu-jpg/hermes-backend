@@ -15,6 +15,7 @@ import healthRouter from './routes/health';
 import chartsRouter from './routes/charts';
 import newsRouter from './routes/news';
 import marketsRouter from './routes/markets';
+import assistantRouter from './routes/assistant';
 import { startCleanupJob } from './services/maintenance';
 import { startPricePoller } from './services/livePrices';
 
@@ -45,6 +46,7 @@ app.use('/trades', tradesRouter);
 app.use('/charts', chartsRouter);
 app.use('/news', newsRouter);
 app.use('/markets', marketsRouter);
+app.use('/assistant', assistantRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
