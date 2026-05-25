@@ -89,10 +89,24 @@ The webhook requires `Authorization: Bearer <WEBHOOK_SECRET>`.
 | GET | `/briefings?limit=24` | AUTH_TOKEN | limit 1–168 (default 24) |
 | GET | `/trades?status=OPEN&symbol=BTCUSDT&limit=100` | AUTH_TOKEN | filtered list |
 | GET | `/trades/stats?window=24h` | AUTH_TOKEN | window: `24h`\|`7d`\|`30d`\|`all` |
+| GET | `/agents` | AUTH_TOKEN | pm2 process list + status; `commandable` flag |
+| GET | `/agents/:name/logs?lines=200` | AUTH_TOKEN | recent pm2 log lines (allowlisted name) |
+| POST | `/agents/:name/action` | AUTH_TOKEN | `{ action: restart\|stop\|start }`, audited |
+| POST | `/agents/command` | AUTH_TOKEN | `{ command: STOP_BOT\|GET_STATUS\|CLOSE_ALL_POSITIONS }`, audited |
 
 `/trades/stats` returns `win_count`/`loss_count`, `win_rate`/`loss_rate` (fractions
 of closed trades with a known P&L; they sum to 1), `win_loss_ratio`, `profit_factor`,
 and per-`by_symbol`/`by_strategy` breakdowns with the same win/loss fields.
+
+### Agent control (VPS Agent tab)
+
+The `/agents` routes power the dashboard's agent console. Status/logs come from
+`pm2` (the backend shells out with fixed, validated args — no shell, process names
+allowlisted via `AGENT_PM2_NAMES`). `/agents/command` forwards `STOP_BOT` /
+`GET_STATUS` / `CLOSE_ALL_POSITIONS` to the trading bot's command webhook
+(`BOT_COMMAND_URL` + `BOT_AUTH_TOKEN`, same contract as the Hermes Agent). Every
+action/command is written to the `events` table (`AGENT_ACTION` / `AGENT_COMMAND`)
+for audit. Destructive commands are expected to be confirmed client-side.
 
 ### Socket.io
 

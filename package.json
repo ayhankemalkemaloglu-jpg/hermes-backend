@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/utils/price.test.ts src/utils/stats.test.ts src/services/marketClassifier.test.ts src/services/binanceStream.test.ts src/services/risk/portfolioGuard.test.ts"
+    "test": "node --import tsx --test src/utils/price.test.ts src/utils/stats.test.ts src/services/marketClassifier.test.ts src/services/binanceStream.test.ts src/services/agentCommands.test.ts src/services/risk/portfolioGuard.test.ts"
   },
   "engines": {
     "node": ">=18"

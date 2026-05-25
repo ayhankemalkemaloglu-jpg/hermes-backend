@@ -30,6 +30,18 @@ const EnvSchema = z.object({
   // Cadence at which the unified live snapshot (price:update + pnl:update) is
   // broadcast to dashboards. Decoupled from the source feeds.
   LIVE_BROADCAST_INTERVAL_MS: z.coerce.number().int().positive().default(1_000),
+
+  // --- Agent control (VPS Agent tab) ---------------------------------------
+  // The trading bot's command webhook (uniswap-v3-monitor /webhook/command) and
+  // its bearer token. When unset, the command endpoint reports "not configured"
+  // instead of sending anything.
+  BOT_COMMAND_URL: z.string().url().optional(),
+  BOT_AUTH_TOKEN: z.string().optional(),
+  // Comma-separated pm2 process names the dashboard may inspect/manage. Empty =
+  // allow all processes pm2 reports (status/logs only; actions still allowlisted).
+  AGENT_PM2_NAMES: z.string().default(''),
+  // Timeout for outgoing bot command requests.
+  BOT_COMMAND_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
   // Briefings older than this are purged by the cleanup job.
   BRIEFING_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   // How often the cleanup job runs.
@@ -84,6 +96,10 @@ export const config = {
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean)
   ),
+  /** pm2 process names the dashboard may inspect/manage (empty = all). */
+  agentNames: env.AGENT_PM2_NAMES.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
   isProduction: env.NODE_ENV === 'production',
   isDev: env.NODE_ENV !== 'production',
 };
