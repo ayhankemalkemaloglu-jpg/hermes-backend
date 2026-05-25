@@ -16,6 +16,12 @@ const EnvSchema = z.object({
   LOG_PATH: z.string().default('./app.log'),
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
   BINANCE_API_BASE: z.string().url().default('https://api.binance.com'),
+  // Yahoo Finance base used to price BIST (Borsa İstanbul) equities as `<TICKER>.IS`.
+  YAHOO_API_BASE: z.string().url().default('https://query1.finance.yahoo.com'),
+  // Optional explicit BIST ticker allowlist (comma-separated). Overrides the
+  // symbol-shape heuristic for any equity that would collide with a crypto
+  // quote suffix. Bare tickers are treated as BIST even when this is empty.
+  BIST_SYMBOLS: z.string().default(''),
   // Live price/P&L poller cadence for open positions.
   PRICE_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
   // Briefings older than this are purged by the cleanup job.
@@ -66,6 +72,12 @@ export const config = {
   corsOrigins: env.CORS_ORIGINS.split(',')
     .map((s) => s.trim())
     .filter(Boolean),
+  /** Explicit BIST ticker allowlist, uppercased, as a fast-lookup set. */
+  bistSymbols: new Set(
+    env.BIST_SYMBOLS.split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean)
+  ),
   isProduction: env.NODE_ENV === 'production',
   isDev: env.NODE_ENV !== 'production',
 };

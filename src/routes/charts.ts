@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
 import { requireAuth } from '../middleware/auth';
-import { getKlines } from '../services/binance';
+import { getKlines } from '../services/marketData';
 
 const router = Router();
 

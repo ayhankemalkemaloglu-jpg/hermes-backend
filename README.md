@@ -19,11 +19,25 @@ WebSocket.
 2. The message is parsed into a briefing, by-symbol rows, and an open-positions snapshot.
 3. The new snapshot is diffed against the previous briefing's snapshot:
    - a position **hash present now but not before** → trade **OPEN**
-   - a position **hash present before but not now** → trade **CLOSED** (exit price from Binance)
+   - a position **hash present before but not now** → trade **CLOSED** (exit price from the symbol's market source)
 4. New briefing + opened/closed trades are broadcast over Socket.io.
 
 `position_hash = md5(symbol|side|entry_price|strategy)` gives each open position a
 stable identity across briefings.
+
+### Markets & price sources
+
+Each trade symbol is classified into a market and priced from the matching source:
+
+- **CRYPTO** — Binance (`BINANCE_API_BASE`). Pairs carry a quote suffix (`BTCUSDT`).
+- **BIST** (Borsa İstanbul equities) — Yahoo Finance (`YAHOO_API_BASE`), addressed as
+  `<TICKER>.IS` (e.g. `THYAO` → `THYAO.IS`). Bare tickers are treated as BIST; set
+  `BIST_SYMBOLS` to force-classify any edge case.
+
+Live prices, exit prices on close, and `/charts` all route through this, so BIST
+positions appear alongside crypto. A symbol with no quote yet (e.g. BIST outside
+trading hours) is still surfaced in `pnl:update` with a `null` price rather than
+dropped. The resolved market is exposed as `market` on trade and live-position payloads.
 
 ## Local development
 
@@ -75,6 +89,10 @@ The webhook requires `Authorization: Bearer <WEBHOOK_SECRET>`.
 | GET | `/briefings?limit=24` | AUTH_TOKEN | limit 1–168 (default 24) |
 | GET | `/trades?status=OPEN&symbol=BTCUSDT&limit=100` | AUTH_TOKEN | filtered list |
 | GET | `/trades/stats?window=24h` | AUTH_TOKEN | window: `24h`\|`7d`\|`30d`\|`all` |
+
+`/trades/stats` returns `win_count`/`loss_count`, `win_rate`/`loss_rate` (fractions
+of closed trades with a known P&L; they sum to 1), `win_loss_ratio`, `profit_factor`,
+and per-`by_symbol`/`by_strategy` breakdowns with the same win/loss fields.
 
 ### Socket.io
 

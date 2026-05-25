@@ -1,10 +1,11 @@
 import { db } from '../db/connection';
 import { ParsedPosition } from '../parser/types';
 import { SnapshotRow, recordEvent } from './briefings';
-import { getCurrentPrice } from './binance';
+import { getCurrentPrice, resolveMarket, type Market } from './marketData';
 import { holdMinutes } from '../utils/time';
 import { logger } from '../utils/logger';
 import { fmtPrice } from '../utils/price';
+import { winLoss } from '../utils/stats';
 import { portfolioGuard, dailyRealizedPnl, RISK_ENABLED, RISK_NOTIONAL } from './risk';
 import type { Verdict } from './risk/portfolioGuard';
 
@@ -61,15 +62,17 @@ const closeTradeStmt = db.prepare(`
 export type TradeView = TradeRow & {
   entry_price_display: string;
   exit_price_display: string | null;
+  market: Market;
   risk_breach?: { reason: string; detail?: unknown };
 };
 
-/** Attach significant-figure price strings to a trade row (FINDING 4). */
+/** Attach significant-figure price strings + market tag to a trade row (FINDING 4). */
 export function withPriceDisplay(t: TradeRow): TradeView {
   return {
     ...t,
     entry_price_display: fmtPrice(t.entry_price),
     exit_price_display: t.exit_price === null ? null : fmtPrice(t.exit_price),
+    market: resolveMarket(t.symbol),
   };
 }
 
@@ -279,7 +282,10 @@ interface GroupStat {
   key: string;
   total_trades: number;
   closed_count: number;
+  win_count: number;
+  loss_count: number;
   win_rate: number;
+  loss_rate: number;
   avg_pnl_pct: number;
   total_pnl_pct: number;
 }
@@ -296,13 +302,16 @@ function groupBy(rows: TradeRow[], keyFn: (r: TradeRow) => string): GroupStat[] 
   const out: GroupStat[] = [];
   for (const [key, group] of groups) {
     const withPnl = group.filter((r): r is TradeRow & { pnl_pct: number } => r.pnl_pct !== null);
-    const wins = withPnl.filter((r) => r.pnl_pct > 0).length;
     const total = withPnl.reduce((s, r) => s + r.pnl_pct, 0);
+    const wl = winLoss(withPnl.map((r) => r.pnl_pct));
     out.push({
       key,
       total_trades: group.length,
       closed_count: withPnl.length,
-      win_rate: withPnl.length ? round(wins / withPnl.length) : 0,
+      win_count: wl.win_count,
+      loss_count: wl.loss_count,
+      win_rate: wl.win_rate,
+      loss_rate: wl.loss_rate,
       avg_pnl_pct: withPnl.length ? round(total / withPnl.length) : 0,
       total_pnl_pct: round(total),
     });
@@ -315,7 +324,10 @@ export interface TradeStats {
   total_trades: number;
   open_count: number;
   closed_count: number;
+  win_count: number;
+  loss_count: number;
   win_rate: number;
+  loss_rate: number;
   win_loss_ratio: number | null;
   avg_pnl_pct: number;
   total_pnl_pct: number;
@@ -341,13 +353,17 @@ export function getStats(window: StatsWindow): TradeStats {
   const grossProfit = wins.reduce((s, r) => s + r.pnl_pct, 0);
   const grossLoss = Math.abs(losses.reduce((s, r) => s + r.pnl_pct, 0));
   const totalPnl = withPnl.reduce((s, r) => s + r.pnl_pct, 0);
+  const wl = winLoss(withPnl.map((r) => r.pnl_pct));
 
   return {
     window,
     total_trades: rows.length,
     open_count: openCount,
     closed_count: closedRows.length,
-    win_rate: withPnl.length ? round(wins.length / withPnl.length) : 0,
+    win_count: wl.win_count,
+    loss_count: wl.loss_count,
+    win_rate: wl.win_rate,
+    loss_rate: wl.loss_rate,
     // null when there are no losses yet — avoids non-serializable Infinity.
     win_loss_ratio: losses.length ? round(wins.length / losses.length) : null,
     avg_pnl_pct: withPnl.length ? round(totalPnl / withPnl.length) : 0,
