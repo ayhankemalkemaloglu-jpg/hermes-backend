@@ -91,21 +91,73 @@ function round(n: number, digits: number): number {
   return Math.round(n * f) / f;
 }
 
+/** Generic JSON GET with timeout, returns parsed body or null. */
+async function fetchJson(url: string): Promise<unknown | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': UA, Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      logger.warn({ url, status: res.status }, 'markets fallback returned non-OK');
+      return null;
+    }
+    return await res.json();
+  } catch (err) {
+    logger.warn({ url, err: (err as Error).message }, 'markets fallback failed');
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Key-free USD/TRY fallback (open.er-api.com) — price only, no prev close. */
+async function fetchUsdTryFallback(): Promise<YahooQuote | null> {
+  const data = (await fetchJson('https://open.er-api.com/v6/latest/USD')) as
+    | { rates?: { TRY?: number } }
+    | null;
+  const try_ = data?.rates?.TRY;
+  return typeof try_ === 'number' && Number.isFinite(try_) ? { price: try_, prevClose: null } : null;
+}
+
+/** Key-free gold (USD per troy ounce) fallback: gold-api.com, then goldprice.org. */
+async function fetchGoldOzFallback(): Promise<number | null> {
+  const a = (await fetchJson('https://api.gold-api.com/price/XAU')) as { price?: number } | null;
+  if (a && typeof a.price === 'number' && Number.isFinite(a.price)) return a.price;
+  const b = (await fetchJson('https://data-asg.goldprice.org/dbXRates/USD')) as
+    | { items?: Array<{ xauPrice?: number }> }
+    | null;
+  const xau = b?.items?.[0]?.xauPrice;
+  return typeof xau === 'number' && Number.isFinite(xau) ? xau : null;
+}
+
 /**
- * Türkiye markets for the dashboard's Türkiye layer: BIST 100 (XU100.IS),
- * USD/TRY (USDTRY=X) and gram gold in TRY (derived from COMEX gold GC=F and
- * USD/TRY). Cached 60s. Yahoo Finance, no API key. Fields that fail resolve to
- * null so the dashboard shows what it can.
+ * Türkiye markets for the dashboard's Türkiye layer: BIST 100, USD/TRY and gram
+ * gold (TRY). Yahoo Finance is primary (full data incl. change%); when Yahoo is
+ * blocked, USD/TRY falls back to open.er-api.com and gold to gold-api.com so the
+ * tickers still populate (without a change% on the fallback path). Cached 60s.
  */
 export async function fetchTurkeyMarkets(): Promise<TurkeyMarkets> {
   const now = Date.now();
   if (cache && now - cache.fetchedAt < TTL_MS) return cache.data;
 
-  const [bist, usd, gold] = await Promise.all([
-    fetchYahoo('XU100.IS'),
-    fetchYahoo('USDTRY=X'),
-    fetchYahoo('GC=F'),
-  ]);
+  const bist = await fetchYahoo('XU100.IS');
+
+  let usd = await fetchYahoo('USDTRY=X');
+  if (!usd) usd = await fetchUsdTryFallback();
+
+  // Gold per troy ounce (USD): Yahoo GC=F, else the key-free fallback.
+  let goldOzPrice: number | null = null;
+  let goldOzPrev: number | null = null;
+  const gc = await fetchYahoo('GC=F');
+  if (gc) {
+    goldOzPrice = gc.price;
+    goldOzPrev = gc.prevClose;
+  } else {
+    goldOzPrice = await fetchGoldOzFallback();
+  }
 
   const bist100: Quote | null = bist
     ? { symbol: 'XU100', price: round(bist.price, 2), changePct: changePct(bist.price, bist.prevClose) }
@@ -116,11 +168,11 @@ export async function fetchTurkeyMarkets(): Promise<TurkeyMarkets> {
     : null;
 
   let gold_gram_try: Quote | null = null;
-  if (gold && usd) {
-    const gramNow = (gold.price / TROY_OZ_G) * usd.price;
+  if (goldOzPrice !== null && usd) {
+    const gramNow = (goldOzPrice / TROY_OZ_G) * usd.price;
     let pct: number | null = null;
-    if (gold.prevClose !== null && usd.prevClose !== null && usd.prevClose !== 0) {
-      const gramPrev = (gold.prevClose / TROY_OZ_G) * usd.prevClose;
+    if (goldOzPrev !== null && usd.prevClose !== null && usd.prevClose !== 0) {
+      const gramPrev = (goldOzPrev / TROY_OZ_G) * usd.prevClose;
       pct = changePct(gramNow, gramPrev);
     }
     gold_gram_try = { symbol: 'GRAM', price: round(gramNow, 2), changePct: pct };
