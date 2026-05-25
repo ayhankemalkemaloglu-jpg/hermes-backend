@@ -4,6 +4,22 @@ import { ParsedPosition, Side } from './types';
 // e.g. "   dogeusdt LONG @ 0.1032 trend_pullback"
 const POSITION_RE = /(\w+)\s+(LONG|SHORT)\s+@\s+([\d.]+)\s+\[?(\w+)\]?/;
 
+// The agent emits the first position's strategy without underscores
+// (e.g. "[rangetrading]") and the rest with ("range_trading"). Both name the
+// same strategy, so we normalize to one spelling — otherwise the same logical
+// position would hash differently across briefings and the diff would see a
+// phantom close+reopen.
+const STRATEGY_ALIASES: Record<string, string> = {
+  trendpullback: 'trend_pullback',
+  rangetrading: 'range_trading',
+  breakoutretest: 'breakout_retest',
+};
+
+function normalizeStrategy(raw: string): string {
+  const s = raw.trim().replace(/^\[|\]$/g, '');
+  return STRATEGY_ALIASES[s] ?? s;
+}
+
 /**
  * Stable identity for an open position. The same symbol+side+entry+strategy
  * tuple yields the same hash across briefings, which is what lets the diff
@@ -44,7 +60,7 @@ export function parsePositions(raw: string): ParsedPosition[] {
     const symbol = m[1].toUpperCase();
     const side = m[2].toUpperCase() as Side;
     const entryPrice = parseFloat(m[3]);
-    const strategy = m[4];
+    const strategy = normalizeStrategy(m[4]);
 
     positions.push({
       symbol,
