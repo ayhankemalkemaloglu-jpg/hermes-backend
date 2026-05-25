@@ -5,6 +5,8 @@ export interface NewsItem {
   url: string;
   source: string;
   age: string | null;
+  /** Publish time in epoch ms (for sorting); null if unparseable. */
+  published: number | null;
   description: string | null;
   thumbnail: string | null;
 }
@@ -108,11 +110,14 @@ async function fetchFeed(feed: Feed): Promise<NewsItem[]> {
       const title = rawTitle.endsWith(` - ${source}`)
         ? rawTitle.slice(0, -(source.length + 3))
         : rawTitle;
+      const pubDate = pick(block, 'pubDate');
+      const ts = pubDate ? Date.parse(pubDate) : NaN;
       items.push({
         title,
         url,
         source,
-        age: relativeAge(pick(block, 'pubDate')),
+        age: relativeAge(pubDate),
+        published: Number.isNaN(ts) ? null : ts,
         description: pick(block, 'description'),
         thumbnail: pickThumb(block),
       });
@@ -137,14 +142,9 @@ export async function fetchNews(category = 'crypto', count = 15): Promise<NewsIt
 
   const feeds = FEEDS[category] ?? FEEDS.crypto;
   const lists = await Promise.all(feeds.map(fetchFeed));
-  // Interleave feeds so the list isn't dominated by a single source.
-  const merged: NewsItem[] = [];
-  const max = Math.max(...lists.map((l) => l.length), 0);
-  for (let i = 0; i < max; i++) {
-    for (const list of lists) {
-      if (list[i]) merged.push(list[i]);
-    }
-  }
+  // Merge all feeds and sort newest → oldest by publish time (nulls last).
+  const merged = lists.flat();
+  merged.sort((a, b) => (b.published ?? 0) - (a.published ?? 0));
 
   const items = merged.slice(0, count);
   if (items.length === 0 && cached) return cached.items;
