@@ -11,7 +11,7 @@ const Query = z.object({
   count: z.coerce.number().int().min(1).max(30).default(15),
 });
 
-// GET /news?category=crypto — key-free RSS-backed news feed.
+// GET /news?category=crypto — Brave API when configured, key-free RSS fallback.
 router.get('/', requireAuth(config.AUTH_TOKEN), async (req: Request, res: Response) => {
   const parsed = Query.safeParse(req.query);
   const category = (parsed.success ? parsed.data.category : undefined) ?? 'crypto';

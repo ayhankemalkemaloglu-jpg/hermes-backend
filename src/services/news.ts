@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { logger } from '../utils/logger';
 
 export interface NewsItem {
@@ -126,18 +127,95 @@ async function fetchFeed(feed: Feed): Promise<NewsItem[]> {
   }
 }
 
-/**
- * Fetch crypto news from key-free RSS feeds, merged and trimmed. Cached 5 min.
- * Returns [] only if every feed fails (and no cache) — never null.
- */
-export async function fetchNews(category = 'crypto', count = 15): Promise<NewsItem[]> {
-  const now = Date.now();
-  const cached = cache.get(category);
-  if (cached && now - cached.fetchedAt < TTL_MS) return cached.items;
+// Recency-biased queries for the Brave web tier (per category).
+const BRAVE_QUERIES: Record<string, string> = {
+  crypto: 'cryptocurrency OR bitcoin OR ethereum latest news',
+};
 
+interface BraveResult {
+  title?: string;
+  url?: string;
+  description?: string;
+  age?: string;
+  page_age?: string;
+  profile?: { name?: string };
+  meta_url?: { hostname?: string };
+  thumbnail?: { src?: string };
+}
+
+interface BraveResponse {
+  web?: { results?: BraveResult[] };
+  news?: { results?: BraveResult[] };
+}
+
+function mapBrave(r: BraveResult): NewsItem | null {
+  const title = r.title ? decode(r.title) : null;
+  if (!title || !r.url) return null;
+  return {
+    title,
+    url: r.url,
+    source: r.profile?.name ?? r.meta_url?.hostname ?? 'Brave',
+    // page_age is ISO (→ relative); otherwise Brave's own "2 hours ago" string.
+    age: relativeAge(r.page_age ?? null) ?? (typeof r.age === 'string' ? r.age : null),
+    description: r.description ? decode(r.description) : null,
+    thumbnail: r.thumbnail?.src ?? null,
+  };
+}
+
+/**
+ * Brave Search (web tier) news, used when BRAVE_API_KEY is set. We send no
+ * `freshness` filter on purpose — on the free web tier it zeroes results — and
+ * instead lean on a recency-biased query and the news cluster Brave returns.
+ * Returns [] on any failure so the caller can fall back to RSS.
+ */
+async function fetchBrave(category: string, count: number): Promise<NewsItem[]> {
+  const key = config.BRAVE_API_KEY;
+  if (!key) return [];
+
+  const q = BRAVE_QUERIES[category] ?? BRAVE_QUERIES.crypto;
+  const url =
+    `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q)}` +
+    `&count=${Math.min(count, 20)}&country=us&search_lang=en&spellcheck=0`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'Accept-Encoding': 'gzip',
+        'X-Subscription-Token': key,
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      logger.warn({ status: res.status }, 'Brave news fetch returned non-OK');
+      return [];
+    }
+    const data = (await res.json()) as BraveResponse;
+    // The news cluster (when present) is fresher than generic web results.
+    const raw = [...(data.news?.results ?? []), ...(data.web?.results ?? [])];
+    const seen = new Set<string>();
+    const items: NewsItem[] = [];
+    for (const r of raw) {
+      const item = mapBrave(r);
+      if (!item || seen.has(item.url)) continue;
+      seen.add(item.url);
+      items.push(item);
+    }
+    return items.slice(0, count);
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'Brave news fetch failed');
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Merge the key-free RSS feeds, interleaved so no single source dominates. */
+async function fetchRss(category: string, count: number): Promise<NewsItem[]> {
   const feeds = FEEDS[category] ?? FEEDS.crypto;
   const lists = await Promise.all(feeds.map(fetchFeed));
-  // Interleave feeds so the list isn't dominated by a single source.
   const merged: NewsItem[] = [];
   const max = Math.max(...lists.map((l) => l.length), 0);
   for (let i = 0; i < max; i++) {
@@ -145,8 +223,22 @@ export async function fetchNews(category = 'crypto', count = 15): Promise<NewsIt
       if (list[i]) merged.push(list[i]);
     }
   }
+  return merged.slice(0, count);
+}
 
-  const items = merged.slice(0, count);
+/**
+ * Crypto news, cached for TTL_MS. Prefers the Brave API when BRAVE_API_KEY is
+ * set, falling back to key-free RSS when Brave is unset, fails, or is empty.
+ * Returns [] only if every source fails and there's no cache — never null.
+ */
+export async function fetchNews(category = 'crypto', count = 15): Promise<NewsItem[]> {
+  const now = Date.now();
+  const cached = cache.get(category);
+  if (cached && now - cached.fetchedAt < TTL_MS) return cached.items;
+
+  let items = await fetchBrave(category, count);
+  if (items.length === 0) items = await fetchRss(category, count);
+
   if (items.length === 0 && cached) return cached.items;
   cache.set(category, { items, fetchedAt: now });
   return items;
