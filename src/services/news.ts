@@ -10,15 +10,15 @@ export interface NewsItem {
   thumbnail: string | null;
 }
 
-/** Shape of a Brave news result (only the fields we use). */
-interface BraveNewsResult {
+/** Shape of a Brave web result (only the fields we use). */
+interface BraveResult {
   title?: string;
   url?: string;
   description?: string;
   age?: string;
-  source?: string;
   meta_url?: { hostname?: string };
   thumbnail?: { src?: string };
+  profile?: { name?: string };
 }
 
 interface CacheEntry {
@@ -31,10 +31,12 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 const TTL_MS = 5 * 60_000;
 const TIMEOUT_MS = 6_000;
-const BRAVE_NEWS_URL = 'https://api.search.brave.com/res/v1/news/search';
+// Web search is included in the basic free plan (news search often is not),
+// so we use it with a freshness filter to bias recent articles.
+const BRAVE_WEB_URL = 'https://api.search.brave.com/res/v1/web/search';
 
 /**
- * Fetch normalized news from Brave Search.
+ * Fetch normalized recent results from Brave web search.
  *   - null  → not configured (no BRAVE_API_KEY) or hard failure with no cache.
  *   - []    → configured but no results.
  * On a transient failure we serve stale cache when available.
@@ -42,7 +44,8 @@ const BRAVE_NEWS_URL = 'https://api.search.brave.com/res/v1/news/search';
 export async function fetchNews(query: string, count = 15): Promise<NewsItem[] | null> {
   if (!config.BRAVE_API_KEY) return null;
 
-  const cacheKey = `${query}::${count}`;
+  const safeCount = Math.min(Math.max(count, 1), 20);
+  const cacheKey = `${query}::${safeCount}`;
   const now = Date.now();
   const cached = cache.get(cacheKey);
   if (cached && now - cached.fetchedAt < TTL_MS) return cached.items;
@@ -50,7 +53,9 @@ export async function fetchNews(query: string, count = 15): Promise<NewsItem[] |
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const url = `${BRAVE_NEWS_URL}?q=${encodeURIComponent(query)}&count=${count}&spellcheck=0`;
+    const url =
+      `${BRAVE_WEB_URL}?q=${encodeURIComponent(query)}` +
+      `&count=${safeCount}&freshness=pw&spellcheck=0`;
     const res = await fetch(url, {
       headers: {
         Accept: 'application/json',
@@ -59,16 +64,22 @@ export async function fetchNews(query: string, count = 15): Promise<NewsItem[] |
       signal: controller.signal,
     });
     if (!res.ok) {
-      logger.warn({ status: res.status }, 'Brave news fetch returned non-OK');
+      const body = await res.text().catch(() => '');
+      logger.warn(
+        { status: res.status, body: body.slice(0, 200) },
+        'Brave search returned non-OK',
+      );
       return cached?.items ?? null;
     }
-    const data = (await res.json()) as { results?: unknown };
-    const results = Array.isArray(data.results) ? (data.results as BraveNewsResult[]) : [];
+    const data = (await res.json()) as { web?: { results?: unknown } };
+    const results = Array.isArray(data.web?.results)
+      ? (data.web?.results as BraveResult[])
+      : [];
     const items: NewsItem[] = results
       .map((r) => ({
         title: r.title ?? '',
         url: r.url ?? '',
-        source: r.meta_url?.hostname ?? r.source ?? '',
+        source: r.meta_url?.hostname ?? r.profile?.name ?? '',
         age: r.age ?? null,
         description: r.description ?? null,
         thumbnail: r.thumbnail?.src ?? null,
@@ -78,7 +89,7 @@ export async function fetchNews(query: string, count = 15): Promise<NewsItem[] |
     cache.set(cacheKey, { items, fetchedAt: now });
     return items;
   } catch (err) {
-    logger.warn({ err: (err as Error).message }, 'Brave news fetch failed');
+    logger.warn({ err: (err as Error).message }, 'Brave search failed');
     return cached?.items ?? null;
   } finally {
     clearTimeout(timer);
