@@ -6,6 +6,8 @@ export interface NewsItem {
   url: string;
   source: string;
   age: string | null;
+  /** ISO publish time when known, for newest-first sorting / client dedup. */
+  published_at: string | null;
   description: string | null;
   thumbnail: string | null;
 }
@@ -68,10 +70,42 @@ function pickThumb(block: string): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * Best-effort parse of a date-ish string to epoch ms: handles ISO / RFC dates
+ * (RSS pubDate, Brave page_age) and relative phrases ("2 hours ago", Brave's
+ * `age`). Returns null when nothing parses.
+ */
+function parseWhen(s: string | null | undefined): number | null {
+  if (!s) return null;
+  const abs = Date.parse(s);
+  if (!Number.isNaN(abs)) return abs;
+  const rel = s.match(/(\d+)\s*(minute|min|hour|hr|day|week|month)s?\s*ago/i);
+  if (rel) {
+    const n = Number(rel[1]);
+    const unit = rel[2].toLowerCase();
+    const ms = unit.startsWith('min')
+      ? 60_000
+      : unit.startsWith('hour') || unit.startsWith('hr')
+        ? 3_600_000
+        : unit.startsWith('day')
+          ? 86_400_000
+          : unit.startsWith('week')
+            ? 604_800_000
+            : 2_592_000_000; // month ≈ 30d
+    return Date.now() - n * ms;
+  }
+  return null;
+}
+
+/** ISO string for a date-ish input, or null. */
+function toIso(s: string | null | undefined): string | null {
+  const ms = parseWhen(s);
+  return ms === null ? null : new Date(ms).toISOString();
+}
+
 function relativeAge(pubDate: string | null): string | null {
-  if (!pubDate) return null;
-  const t = new Date(pubDate).getTime();
-  if (Number.isNaN(t)) return null;
+  const t = parseWhen(pubDate);
+  if (t === null) return null;
   const mins = Math.max(0, Math.floor((Date.now() - t) / 60_000));
   if (mins < 60) return `${mins} dk önce`;
   const hrs = Math.floor(mins / 60);
@@ -109,11 +143,13 @@ async function fetchFeed(feed: Feed): Promise<NewsItem[]> {
       const title = rawTitle.endsWith(` - ${source}`)
         ? rawTitle.slice(0, -(source.length + 3))
         : rawTitle;
+      const pubDate = pick(block, 'pubDate');
       items.push({
         title,
         url,
         source,
-        age: relativeAge(pick(block, 'pubDate')),
+        age: relativeAge(pubDate),
+        published_at: toIso(pubDate),
         description: pick(block, 'description'),
         thumbnail: pickThumb(block),
       });
@@ -155,8 +191,9 @@ function mapBrave(r: BraveResult): NewsItem | null {
     title,
     url: r.url,
     source: r.profile?.name ?? r.meta_url?.hostname ?? 'Brave',
-    // page_age is ISO (→ relative); otherwise Brave's own "2 hours ago" string.
-    age: relativeAge(r.page_age ?? null) ?? (typeof r.age === 'string' ? r.age : null),
+    // page_age/age are ISO or relative ("2 hours ago"); both feed relativeAge.
+    age: relativeAge(r.page_age ?? r.age ?? null) ?? (typeof r.age === 'string' ? r.age : null),
+    published_at: toIso(r.page_age) ?? toIso(r.age),
     description: r.description ? decode(r.description) : null,
     thumbnail: r.thumbnail?.src ?? null,
   };
@@ -193,17 +230,9 @@ async function fetchBrave(category: string, count: number): Promise<NewsItem[]> 
       return [];
     }
     const data = (await res.json()) as BraveResponse;
-    // The news cluster (when present) is fresher than generic web results.
+    // News cluster + generic web results; fetchNews sorts and de-dups.
     const raw = [...(data.news?.results ?? []), ...(data.web?.results ?? [])];
-    const seen = new Set<string>();
-    const items: NewsItem[] = [];
-    for (const r of raw) {
-      const item = mapBrave(r);
-      if (!item || seen.has(item.url)) continue;
-      seen.add(item.url);
-      items.push(item);
-    }
-    return items.slice(0, count);
+    return raw.map(mapBrave).filter((x): x is NewsItem => x !== null);
   } catch (err) {
     logger.warn({ err: (err as Error).message }, 'Brave news fetch failed');
     return [];
@@ -212,32 +241,46 @@ async function fetchBrave(category: string, count: number): Promise<NewsItem[]> 
   }
 }
 
-/** Merge the key-free RSS feeds, interleaved so no single source dominates. */
-async function fetchRss(category: string, count: number): Promise<NewsItem[]> {
+/** All items from the key-free RSS feeds (fetchNews sorts and de-dups). */
+async function fetchRss(category: string): Promise<NewsItem[]> {
   const feeds = FEEDS[category] ?? FEEDS.crypto;
   const lists = await Promise.all(feeds.map(fetchFeed));
-  const merged: NewsItem[] = [];
-  const max = Math.max(...lists.map((l) => l.length), 0);
-  for (let i = 0; i < max; i++) {
-    for (const list of lists) {
-      if (list[i]) merged.push(list[i]);
-    }
+  return lists.flat();
+}
+
+function whenMs(iso: string | null): number {
+  if (!iso) return -Infinity;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? -Infinity : t;
+}
+
+/** Newest-first, de-duplicated by URL, trimmed to `count`. Undated items last. */
+function sortAndDedup(items: NewsItem[], count: number): NewsItem[] {
+  const sorted = [...items].sort((a, b) => whenMs(b.published_at) - whenMs(a.published_at));
+  const seen = new Set<string>();
+  const out: NewsItem[] = [];
+  for (const it of sorted) {
+    if (seen.has(it.url)) continue;
+    seen.add(it.url);
+    out.push(it);
   }
-  return merged.slice(0, count);
+  return out.slice(0, count);
 }
 
 /**
- * Crypto news, cached for TTL_MS. Prefers the Brave API when BRAVE_API_KEY is
- * set, falling back to key-free RSS when Brave is unset, fails, or is empty.
- * Returns [] only if every source fails and there's no cache — never null.
+ * Crypto news, cached for TTL_MS, returned newest-first and de-duplicated by
+ * URL. Prefers the Brave API when BRAVE_API_KEY is set, falling back to
+ * key-free RSS when Brave is unset, fails, or is empty. Returns [] only if
+ * every source fails and there's no cache — never null.
  */
 export async function fetchNews(category = 'crypto', count = 15): Promise<NewsItem[]> {
   const now = Date.now();
   const cached = cache.get(category);
   if (cached && now - cached.fetchedAt < TTL_MS) return cached.items;
 
-  let items = await fetchBrave(category, count);
-  if (items.length === 0) items = await fetchRss(category, count);
+  let raw = await fetchBrave(category, count);
+  if (raw.length === 0) raw = await fetchRss(category);
+  const items = sortAndDedup(raw, count);
 
   if (items.length === 0 && cached) return cached.items;
   cache.set(category, { items, fetchedAt: now });
