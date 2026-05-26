@@ -42,6 +42,18 @@ const EnvSchema = z.object({
   AGENT_PM2_NAMES: z.string().default(''),
   // Timeout for outgoing bot command requests.
   BOT_COMMAND_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+
+  // --- Assistant (Hermes chat / voice agent) -------------------------------
+  // LLM provider for the "Hermes ile Konuşma" chat + voice agent. The key lives
+  // only in this env (never in the client bundle). When ASSISTANT_API_KEY is
+  // unset, /assistant/chat returns "not_configured".
+  ASSISTANT_PROVIDER: z.enum(['minimax', 'openai']).default('minimax'),
+  ASSISTANT_API_KEY: z.string().optional(),
+  ASSISTANT_MODEL: z.string().default('MiniMax-Text-01'),
+  // Provider base URL. MiniMax intl: https://api.minimax.io ; OpenAI: https://api.openai.com
+  ASSISTANT_API_BASE: z.string().url().default('https://api.minimax.io'),
+  ASSISTANT_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+
   // Briefings older than this are purged by the cleanup job.
   BRIEFING_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   // How often the cleanup job runs.
