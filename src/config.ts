@@ -52,6 +52,9 @@ const EnvSchema = z.object({
   ASSISTANT_MODEL: z.string().default('MiniMax-Text-01'),
   // Provider base URL. MiniMax intl: https://api.minimax.io ; OpenAI: https://api.openai.com
   ASSISTANT_API_BASE: z.string().url().default('https://api.minimax.io'),
+  // Optional MiniMax GroupId — only needed if your MiniMax account/endpoint
+  // requires it as a query param (the Bearer JWT usually already encodes it).
+  MINIMAX_GROUP_ID: z.string().optional(),
   ASSISTANT_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 
   // Briefings older than this are purged by the cleanup job.

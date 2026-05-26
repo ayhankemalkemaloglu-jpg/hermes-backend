@@ -90,7 +90,10 @@ async function postJson(url: string, body: unknown): Promise<Record<string, unkn
 
 /** MiniMax chat completion v2 (OpenAI-style messages, base_resp status envelope). */
 async function callMiniMax(system: string, history: ChatMessage[]): Promise<string> {
-  const data = await postJson(`${config.ASSISTANT_API_BASE}/v1/text/chatcompletion_v2`, {
+  const url = config.MINIMAX_GROUP_ID
+    ? `${config.ASSISTANT_API_BASE}/v1/text/chatcompletion_v2?GroupId=${encodeURIComponent(config.MINIMAX_GROUP_ID)}`
+    : `${config.ASSISTANT_API_BASE}/v1/text/chatcompletion_v2`;
+  const data = await postJson(url, {
     model: config.ASSISTANT_MODEL,
     messages: [{ role: 'system', content: system }, ...history],
     stream: false,
